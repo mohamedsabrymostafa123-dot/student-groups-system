@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>بحث عن مجموعتك</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <nav class="bg-white shadow">
+    <div class="max-w-2xl mx-auto px-4 py-3 flex gap-4 text-sm font-semibold">
+      <a href="/" class="text-slate-600 hover:text-indigo-600">التسجيل</a>
+      <a href="/find.html" class="text-indigo-600">بحث عن مجموعتك</a>
+    </div>
+  </nav>
+
+  <main class="max-w-2xl mx-auto p-4">
+    <div class="bg-white rounded-2xl shadow p-6 mt-6">
+      <h1 class="text-2xl font-bold mb-4">بحث عن مجموعتك</h1>
+      <form id="form" class="flex gap-2">
+        <input id="code" dir="ltr" placeholder="أدخل كود الكلية" required
+               class="flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <button class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 rounded-lg">بحث</button>
+      </form>
+      <div id="error" class="hidden mt-4 bg-red-100 text-red-800 rounded-lg px-3 py-2 text-sm"></div>
+    </div>
+
+    <div id="result" class="hidden bg-white rounded-2xl shadow p-6 mt-4">
+      <p id="hello" class="text-slate-600 mb-1"></p>
+      <h2 id="groupTitle" class="text-3xl font-extrabold text-indigo-600 mb-1"></h2>
+      <p id="status" class="text-sm text-slate-500 mb-4"></p>
+
+      <table class="w-full text-sm mb-4">
+        <thead>
+          <tr class="bg-slate-50 text-slate-600">
+            <th class="p-2 text-right">#</th>
+            <th class="p-2 text-right">الاسم</th>
+            <th class="p-2 text-right">الكود</th>
+            <th class="p-2 text-right">النوع</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+
+      <div id="linkBox"></div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function td(text, cls) {
+      const c = document.createElement('td');
+      c.className = 'p-2 ' + (cls || '');
+      c.textContent = text; // textContent يمنع حقن الأكواد (XSS)
+      return c;
+    }
+
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('error').classList.add('hidden');
+      $('result').classList.add('hidden');
+      const code = $('code').value.trim();
+      if (!code) return;
+
+      try {
+        const res = await fetch('/api/group/' + encodeURIComponent(code));
+        const data = await res.json();
+        if (!res.ok) {
+          $('error').textContent = data.error;
+          $('error').classList.remove('hidden');
+          return;
+        }
+
+        $('hello').textContent = 'أهلاً ' + data.me.fullName;
+        $('groupTitle').textContent = 'مجموعة ' + data.group.number;
+        $('status').textContent = data.group.complete
+          ? 'المجموعة مكتملة (10 أعضاء).'
+          : `المجموعة ما زالت مفتوحة (${data.group.size} من 10) وقد يتغير أعضاؤها حتى تكتمل.`;
+
+        const rows = $('rows');
+        rows.innerHTML = '';
+        data.group.members.forEach((m, i) => {
+          const tr = document.createElement('tr');
+          const isMe = m.collegeCode === data.me.collegeCode;
+          tr.className = 'border-t ' + (isMe ? 'bg-indigo-50 font-bold' : '');
+          tr.append(
+            td(i + 1),
+            td(m.fullName + (isMe ? ' (أنت)' : '')),
+            td(m.collegeCode, 'font-mono'),
+            td(m.gender === 'male' ? 'شاب' : 'بنت')
+          );
+          rows.appendChild(tr);
+        });
+
+        const box = $('linkBox');
+        box.innerHTML = '';
+        if (data.group.whatsappLink) {
+          const a = document.createElement('a');
+          a.href = data.group.whatsappLink;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'block text-center bg-green-500 hover:bg-green-600 text-white font-bold py-2.5 rounded-lg';
+          a.textContent = 'الانضمام لجروب الواتساب';
+          box.appendChild(a);
+        } else {
+          const p = document.createElement('p');
+          p.className = 'text-center text-slate-500 text-sm bg-slate-50 rounded-lg py-2';
+          p.textContent = 'رابط جروب الواتساب لم يُضَف بعد، تابعنا قريباً.';
+          box.appendChild(p);
+        }
+
+        $('result').classList.remove('hidden');
+      } catch {
+        $('error').textContent = 'تعذّر الاتصال بالخادم.';
+        $('error').classList.remove('hidden');
+      }
+    });
+  </script>
+</body>
+</html>

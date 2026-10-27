@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>لوحة المشرف</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-5xl mx-auto p-4">
+
+    <!-- تسجيل الدخول -->
+    <section id="loginBox" class="max-w-md mx-auto mt-16 bg-white rounded-2xl shadow p-6">
+      <h1 class="text-2xl font-bold mb-4">دخول المشرف</h1>
+      <form id="login" class="space-y-3">
+        <input id="user" placeholder="اسم المستخدم" autocomplete="username" dir="ltr" class="w-full border rounded-lg px-3 py-2">
+        <input id="pw" type="password" placeholder="كلمة المرور" autocomplete="current-password" dir="ltr" class="w-full border rounded-lg px-3 py-2">
+        <button class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg">دخول</button>
+      </form>
+    </section>
+
+    <!-- اللوحة -->
+    <section id="panel" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 my-4">
+        <h1 class="text-2xl font-bold flex-1">لوحة المشرف</h1>
+        <button id="exportBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-lg">⬇ تحميل Excel</button>
+        <button id="refreshBtn" class="bg-white border text-sm px-4 py-2 rounded-lg">تحديث</button>
+        <button id="logoutBtn" class="bg-white border text-red-600 text-sm px-4 py-2 rounded-lg">خروج</button>
+      </div>
+      <p id="total" class="text-slate-600 mb-3"></p>
+      <div id="groups" class="space-y-4"></div>
+    </section>
+
+    <div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg"></div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let token = sessionStorage.getItem('adminToken') || '';
+    let lastGroups = [];
+
+    function toast(text, ok = true) {
+      const t = $('toast');
+      t.textContent = text;
+      t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg ' +
+        (ok ? 'bg-green-600 text-white' : 'bg-red-600 text-white');
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => t.classList.add('hidden'), 3500);
+    }
+
+    function authHeaders() {
+      return { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token };
+    }
+
+    function showLogin() {
+      token = '';
+      sessionStorage.removeItem('adminToken');
+      $('panel').classList.add('hidden');
+      $('loginBox').classList.remove('hidden');
+    }
+
+    async function api(url, opts = {}) {
+      const res = await fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+      if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
+      return res;
+    }
+
+    // ---------- الدخول ----------
+    $('login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: $('user').value, password: $('pw').value }),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.error, false);
+      token = data.token;
+      sessionStorage.setItem('adminToken', token);
+      $('pw').value = '';
+      await load();
+    });
+
+    $('logoutBtn').onclick = async () => {
+      try { await api('/api/admin/logout', { method: 'POST' }); } catch {}
+      showLogin();
+    };
+    $('refreshBtn').onclick = () => load();
+
+    // ---------- تحميل Excel ----------
+    $('exportBtn').onclick = async () => {
+      try {
+        const res = await api('/api/admin/export');
+        if (!res.ok) return toast('فشل التصدير.', false);
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'groups-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch {}
+    };
+
+    // ---------- تحميل المجموعات ----------
+    async function load() {
+      try {
+        const res = await api('/api/admin/groups');
+        const data = await res.json();
+        $('loginBox').classList.add('hidden');
+        $('panel').classList.remove('hidden');
+        lastGroups = data.groups;
+        $('total').textContent = `إجمالي المسجلين: ${data.total} — عدد المجموعات: ${data.groups.length}`;
+        const wrap = $('groups');
+        wrap.innerHTML = '';
+        data.groups.forEach((g) => wrap.appendChild(renderGroup(g)));
+      } catch {}
+    }
+
+    function cell(text, cls = '') {
+      const td = document.createElement('td');
+      td.className = 'p-1.5 ' + cls;
+      td.textContent = text; // textContent يمنع XSS
+      return td;
+    }
+
+    async function moveStudent(code, group) {
+      const res = await api('/api/admin/move', { method: 'POST', body: JSON.stringify({ code, group }) });
+      const d = await res.json();
+      toast(d.message || d.error, res.ok);
+      if (res.ok) load();
+    }
+
+    function renderGroup(g) {
+      const card = document.createElement('div');
+      card.className = 'bg-white rounded-2xl shadow p-4';
+
+      const title = document.createElement('div');
+      title.className = 'flex flex-wrap items-center gap-2 mb-3';
+      const h = document.createElement('h2');
+      h.className = 'font-bold text-lg';
+      h.textContent = 'مجموعة ' + g.number;
+      const badge = document.createElement('span');
+      badge.className = 'text-xs px-2 py-0.5 rounded-full ' + (g.complete ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700');
+      badge.textContent = g.complete ? 'مكتملة' : 'مفتوحة';
+      const bal = document.createElement('span');
+      bal.className = 'text-xs text-slate-500';
+      bal.textContent = `${g.members.length} أفراد — ${g.males} شباب / ${g.females} بنات`;
+      title.append(h, badge, bal);
+
+      const scroll = document.createElement('div');
+      scroll.className = 'overflow-x-auto mb-3';
+      const table = document.createElement('table');
+      table.className = 'w-full text-sm';
+
+      const thead = document.createElement('tr');
+      thead.className = 'bg-slate-50 text-slate-600';
+      ['الكود', 'الاسم', 'النوع', 'الهاتف', 'المجموعة الأصلية', 'نقل إلى', ''].forEach((t) => {
+        const th = document.createElement('th');
+        th.className = 'p-1.5 text-right font-semibold';
+        th.textContent = t;
+        thead.appendChild(th);
+      });
+      table.appendChild(thead);
+
+      g.members.forEach((m) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-t ' + (m.pinned ? 'bg-amber-50' : '');
+        tr.append(
+          cell(m.collegeCode, 'font-mono'),
+          cell((m.pinned ? '📌 ' : '') + m.fullName),
+          cell(m.gender === 'male' ? 'شاب' : 'بنت'),
+          cell(m.phone, 'font-mono'),
+          cell(m.originalGroup || '-')
+        );
+
+        // قائمة النقل
+        const moveTd = document.createElement('td');
+        moveTd.className = 'p-1.5 whitespace-nowrap';
+        const sel = document.createElement('select');
+        sel.className = 'border rounded px-1 py-0.5 text-xs';
+        const ph = document.createElement('option');
+        ph.value = ''; ph.textContent = 'اختر مجموعة';
+        sel.appendChild(ph);
+        lastGroups.forEach((x) => {
+          if (x.number === g.number) return;
+          const o = document.createElement('option');
+          o.value = x.number; o.textContent = 'مجموعة ' + x.number;
+          sel.appendChild(o);
+        });
+        const mv = document.createElement('button');
+        mv.className = 'bg-indigo-600 text-white text-xs px-2 py-1 rounded mr-1';
+        mv.textContent = 'نقل';
+        mv.onclick = () => {
+          if (!sel.value) return toast('اختر المجموعة أولاً.', false);
+          moveStudent(m.collegeCode, Number(sel.value));
+        };
+        moveTd.append(sel, mv);
+        if (m.pinned) {
+          const un = document.createElement('button');
+          un.className = 'text-amber-700 text-xs underline mr-2';
+          un.textContent = 'إلغاء النقل';
+          un.onclick = () => moveStudent(m.collegeCode, null);
+          moveTd.appendChild(un);
+        }
+        tr.appendChild(moveTd);
+
+        const delTd = document.createElement('td');
+        const del = document.createElement('button');
+        del.className = 'text-red-600 text-xs hover:underline';
+        del.textContent = 'حذف';
+        del.onclick = async () => {
+          if (!confirm('حذف الطالب ' + m.fullName + '؟')) return;
+          const res = await api('/api/admin/student/' + encodeURIComponent(m.collegeCode), { method: 'DELETE' });
+          const d = await res.json();
+          toast(d.message, res.ok);
+          load();
+        };
+        delTd.appendChild(del);
+        tr.appendChild(delTd);
+
+        table.appendChild(tr);
+      });
+      scroll.appendChild(table);
+
+      // رابط الواتساب
+      const row = document.createElement('div');
+      row.className = 'flex gap-2';
+      const input = document.createElement('input');
+      input.dir = 'ltr';
+      input.value = g.whatsappLink || '';
+      input.placeholder = 'https://chat.whatsapp.com/...';
+      input.className = 'flex-1 border rounded-lg px-3 py-1.5 text-sm';
+      const save = document.createElement('button');
+      save.className = 'bg-green-600 text-white text-sm px-4 rounded-lg';
+      save.textContent = 'حفظ الرابط';
+      save.onclick = async () => {
+        const res = await api('/api/admin/link', {
+          method: 'POST',
+          body: JSON.stringify({ group: g.number, link: input.value.trim() }),
+        });
+        const d = await res.json();
+        toast(d.message || d.error, res.ok);
+      };
+      row.append(input, save);
+
+      card.append(title, scroll, row);
+      return card;
+    }
+
+    // لو فيه جلسة محفوظة (بعد تحديث الصفحة) نحاول نكمل
+    if (token) load();
+  </script>
+</body>
+</html>
